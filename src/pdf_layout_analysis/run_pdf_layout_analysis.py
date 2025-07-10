@@ -19,9 +19,19 @@ from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.data.datasets import register_coco_instances
 from detectron2.data import DatasetCatalog
 
-configuration = get_model_configuration()
-model = VGTTrainer.build_model(configuration)
-DetectionCheckpointer(model, save_dir=configuration.OUTPUT_DIR).resume_or_load(configuration.MODEL.WEIGHTS, resume=True)
+# Global variables for lazy loading
+_configuration = None
+_model = None
+
+def get_or_load_model():
+    """Lazy loading of model to avoid loading during import"""
+    global _configuration, _model
+    if _configuration is None:
+        _configuration = get_model_configuration()
+    if _model is None:
+        _model = VGTTrainer.build_model(_configuration)
+        DetectionCheckpointer(_model, save_dir=_configuration.OUTPUT_DIR).resume_or_load(_configuration.MODEL.WEIGHTS, resume=True)
+    return _configuration, _model
 
 
 def get_file_path(file_name, extension):
@@ -50,6 +60,7 @@ def register_data():
 
 
 def predict_doclaynet():
+    configuration, model = get_or_load_model()
     register_data()
     VGTTrainer.test(configuration, model)
 
