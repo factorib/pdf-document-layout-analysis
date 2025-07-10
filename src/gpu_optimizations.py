@@ -12,41 +12,74 @@ logger = logging.getLogger(__name__)
 class A10GOptimizer:
     """
     Advanced GPU optimizations specifically for NVIDIA A10G GPU
-    Implements the comprehensive optimization plan for 3-4x performance improvement
+    Implements A10G-specific optimizations for maximum performance
     """
     
     def __init__(self):
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.scaler = GradScaler()
+        self.is_a10g = self.verify_a10g_gpu()
         self.setup_environment()
         self.configure_gpu_optimizations()
         self.memory_pool = None
         self.tensor_cache = {}
         
+    def verify_a10g_gpu(self):
+        """Verify if we're actually running on A10G GPU"""
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            compute_capability = torch.cuda.get_device_capability(0)
+            # A10G has compute capability 8.6
+            is_a10g = "A10G" in gpu_name and compute_capability == (8, 6)
+            if not is_a10g:
+                logger.warning(f"Not running on A10G GPU. Detected: {gpu_name}, Compute: {compute_capability}")
+            else:
+                logger.info(f"A10G GPU detected: {gpu_name}, Compute: {compute_capability}")
+            return is_a10g
+        return False
+        
     def setup_environment(self):
         """Set optimal environment variables for A10G GPU"""
-        env_vars = {
-            # Memory optimizations for A10G (24GB VRAM)
-            "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512,garbage_collection_threshold:0.8,expandable_segments:False,roundup_power2_divisions:16",
-            "TORCH_BACKENDS_CUDNN_BENCHMARK": "1",
-            "TORCH_BACKENDS_CUDNN_DETERMINISTIC": "0", 
-            "TORCH_BACKENDS_CUDNN_ENABLED": "1",
-            "TORCH_BACKENDS_CUDA_MATMUL_ALLOW_TF32": "1",
-            "CUDA_VISIBLE_DEVICES": "0",
-            "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
-            "CUDA_LAUNCH_BLOCKING": "0",
-            "CUDA_MODULE_LOADING": "LAZY",
-            # CPU optimizations for 8-core system
-            "OMP_NUM_THREADS": "8",
-            "MKL_NUM_THREADS": "8", 
-            "OPENBLAS_NUM_THREADS": "8",
-            "NUMEXPR_NUM_THREADS": "8"
-        }
+        if self.is_a10g:
+            # A10G-specific optimizations
+            env_vars = {
+                # A10G memory optimizations (24GB VRAM)
+                "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:1024,garbage_collection_threshold:0.9,expandable_segments:True,roundup_power2_divisions:8",
+                "TORCH_BACKENDS_CUDNN_BENCHMARK": "1",
+                "TORCH_BACKENDS_CUDNN_DETERMINISTIC": "0", 
+                "TORCH_BACKENDS_CUDNN_ENABLED": "1",
+                "TORCH_BACKENDS_CUDA_MATMUL_ALLOW_TF32": "1",
+                "TORCH_BACKENDS_CUDA_MATMUL_ALLOW_BF16_REDUCED_PRECISION_REDUCTION": "1",
+                "CUDA_VISIBLE_DEVICES": "0",
+                "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+                "CUDA_LAUNCH_BLOCKING": "0",
+                "CUDA_MODULE_LOADING": "LAZY",
+                # A10G tensor core optimizations
+                "NVIDIA_TF32_OVERRIDE": "1",
+                "CUDA_AUTO_BOOST": "1",
+                # CPU optimizations for g5.2xlarge (8 vCPUs)
+                "OMP_NUM_THREADS": "8",
+                "MKL_NUM_THREADS": "8", 
+                "OPENBLAS_NUM_THREADS": "8",
+                "NUMEXPR_NUM_THREADS": "8"
+            }
+        else:
+            # Generic GPU optimizations for non-A10G
+            env_vars = {
+                "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:512,garbage_collection_threshold:0.8",
+                "TORCH_BACKENDS_CUDNN_BENCHMARK": "1",
+                "TORCH_BACKENDS_CUDA_MATMUL_ALLOW_TF32": "1",
+                "CUDA_VISIBLE_DEVICES": "0",
+                "OMP_NUM_THREADS": "4"
+            }
         
         for key, value in env_vars.items():
             os.environ[key] = value
             
-        logger.info("A10G environment variables configured for optimal performance")
+        if self.is_a10g:
+            logger.info("A10G-specific environment variables configured for optimal performance")
+        else:
+            logger.info("Generic GPU environment variables configured")
         
     def configure_gpu_optimizations(self):
         """Configure PyTorch for maximum A10G utilization"""
@@ -58,26 +91,49 @@ class A10GOptimizer:
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
             
-            # Set memory management for A10G
-            if hasattr(torch.cuda, 'set_memory_allocator'):
-                self.memory_pool = torch.cuda.memory.MemoryPool()
-                torch.cuda.set_memory_allocator(self.memory_pool.allocator)
+            if self.is_a10g:
+                # A10G-specific optimizations
+                torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
+                torch.backends.cuda.preferred_linalg_library = "cusolver"
+                
+                # Configure A10G memory allocator
+                if hasattr(torch.cuda, 'set_memory_allocator'):
+                    self.memory_pool = torch.cuda.memory.MemoryPool()
+                    torch.cuda.set_memory_allocator(self.memory_pool.allocator)
+                
+                # A10G optimal batch sizes for inference
+                self.optimal_batch_sizes = [1, 2, 4, 8, 16]  # Powers of 2 for tensor cores
+                
+                logger.info(f"A10G GPU optimizations configured: {torch.cuda.get_device_name()}")
+            else:
+                # Generic GPU optimizations
+                self.optimal_batch_sizes = [1, 2, 4, 8]
+                logger.info(f"Generic GPU optimizations configured: {torch.cuda.get_device_name()}")
             
             # Pre-allocate common tensor sizes
             self.prealloc_tensors()
             
-            logger.info(f"GPU optimizations configured for device: {torch.cuda.get_device_name()}")
         else:
             logger.warning("CUDA not available - GPU optimizations disabled")
     
     def prealloc_tensors(self):
         """Pre-allocate common tensor sizes for A10G to avoid runtime allocation"""
-        common_sizes = [
-            (1, 3, 800, 1333),    # Single page standard
-            (2, 3, 800, 1333),    # Small batch
-            (4, 3, 800, 1333),    # Medium batch  
-            (8, 3, 800, 1333),    # Optimal batch for A10G
-        ]
+        if self.is_a10g:
+            # A10G-optimized tensor sizes (multiples of 8 for tensor cores)
+            common_sizes = [
+                (1, 3, 800, 1344),    # Single page (1344 = 1333 rounded up to multiple of 8)
+                (2, 3, 800, 1344),    # Small batch
+                (4, 3, 800, 1344),    # Medium batch  
+                (8, 3, 800, 1344),    # Optimal batch for A10G
+                (16, 3, 800, 1344),   # Large batch for A10G
+            ]
+        else:
+            # Generic GPU tensor sizes
+            common_sizes = [
+                (1, 3, 800, 1333),    # Single page standard
+                (2, 3, 800, 1333),    # Small batch
+                (4, 3, 800, 1333),    # Medium batch
+            ]
         
         for size in common_sizes:
             key = f"tensor_{size}"
@@ -116,10 +172,17 @@ class A10GOptimizer:
             if images.dtype != torch.float16:
                 images = images.to(dtype=torch.float16, device=self.device)
             
-            # Optimal batch size for A10G memory (24GB VRAM)
-            batch_size = min(len(images) if hasattr(images, '__len__') else 1, 8)
+            # A10G-specific optimal batch size
+            if self.is_a10g:
+                # A10G can handle larger batches with 24GB VRAM
+                max_batch_size = 16
+            else:
+                # Conservative batch size for other GPUs
+                max_batch_size = 8
             
-            # Use channels_last for better memory layout
+            batch_size = min(len(images) if hasattr(images, '__len__') else 1, max_batch_size)
+            
+            # Use channels_last for better memory layout on A10G
             if hasattr(images, 'to'):
                 images = images.to(memory_format=torch.channels_last)
             
@@ -141,11 +204,16 @@ class A10GOptimizer:
             reserved = torch.cuda.memory_reserved() / 1024**3    # GB
             max_allocated = torch.cuda.max_memory_allocated() / 1024**3  # GB
             
+            # Get actual GPU memory capacity
+            total_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3  # GB
+            
             return {
                 "allocated_gb": allocated,
                 "reserved_gb": reserved, 
                 "max_allocated_gb": max_allocated,
-                "utilization_pct": (allocated / 24.0) * 100  # A10G has 24GB
+                "total_memory_gb": total_memory,
+                "utilization_pct": (allocated / total_memory) * 100,
+                "is_a10g": self.is_a10g
             }
         return {"error": "CUDA not available"}
     

@@ -44,7 +44,24 @@ def get_model_configuration():
     add_vit_config(configuration)
     configuration.merge_from_file(args.config_file)
     configuration.merge_from_list(args.opts)
-    configuration.MODEL.DEVICE = "cuda" if is_gpu_available() else "cpu"
+    
+    # GPU device configuration
+    use_gpu = is_gpu_available()
+    configuration.MODEL.DEVICE = "cuda" if use_gpu else "cpu"
+    
+    # A10G-specific optimizations
+    if use_gpu and torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        compute_capability = torch.cuda.get_device_capability(0)
+        
+        if "A10G" in gpu_name and compute_capability == (8, 6):
+            # A10G-specific batch size optimization
+            configuration.SOLVER.IMS_PER_BATCH = 16  # Increased from 12 for A10G
+            configuration.TEST.BATCH_SIZE_PER_IMAGE = 512  # Optimal for A10G
+            service_logger.info(f"A10G GPU detected - optimized batch sizes configured")
+        else:
+            service_logger.info(f"Non-A10G GPU detected: {gpu_name}")
+    
     configuration.freeze()
     default_setup(configuration, args)
 
