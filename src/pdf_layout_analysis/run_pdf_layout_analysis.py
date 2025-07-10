@@ -1,5 +1,6 @@
 import tempfile
 import uuid
+import time
 from os.path import join
 from pathlib import Path
 from typing import AnyStr
@@ -62,20 +63,38 @@ def analyze_pdf(file: AnyStr, xml_file_name: str, extraction_format: str = "", k
     thread_id = threading.current_thread().ident
     unique_id = f"{request_id}_{thread_id}"
     
+    # Start timing
+    start_time = time.time()
+    
     try:
         pdf_path = pdf_content_to_pdf_path(file, unique_id)
         service_logger.info(f"[{unique_id}] Starting PDF analysis")
         
         # Process PDF with isolated resources
+        stage_start = time.time()
         pdf_images_list: list[PdfImages] = [PdfImages.from_pdf_path(pdf_path, "", xml_file_name)]
+        pdf_creation_time = time.time() - stage_start
+        service_logger.info(f"[{unique_id}] PDF images created in {pdf_creation_time:.3f}s")
+        
+        stage_start = time.time()
         create_word_grid([pdf_images.pdf_features for pdf_images in pdf_images_list])
+        word_grid_time = time.time() - stage_start
+        service_logger.info(f"[{unique_id}] Word grid created in {word_grid_time:.3f}s")
+        
+        stage_start = time.time()
         get_annotations(pdf_images_list)
+        annotation_time = time.time() - stage_start
+        service_logger.info(f"[{unique_id}] Annotations generated in {annotation_time:.3f}s")
         
         # Run GPU inference (this is the critical section)
+        stage_start = time.time()
         service_logger.info(f"[{unique_id}] Running GPU inference")
         predict_doclaynet()
+        gpu_time = time.time() - stage_start
+        service_logger.info(f"[{unique_id}] GPU inference completed in {gpu_time:.3f}s")
         
         # Process results
+        stage_start = time.time()
         predicted_segments = get_most_probable_pdf_segments("doclaynet", pdf_images_list, False)
         predicted_segments = get_reading_orders(pdf_images_list, predicted_segments)
         extract_formula_format(pdf_images_list[0], predicted_segments)
@@ -83,6 +102,11 @@ def analyze_pdf(file: AnyStr, xml_file_name: str, extraction_format: str = "", k
         if extraction_format:
             extract_table_format(pdf_images_list[0], predicted_segments, extraction_format)
         
+        post_processing_time = time.time() - stage_start
+        service_logger.info(f"[{unique_id}] Post-processing completed in {post_processing_time:.3f}s")
+        
+        total_time = time.time() - start_time
+        service_logger.info(f"[{unique_id}] TOTAL TIME: {total_time:.3f}s (PDF:{pdf_creation_time:.3f}s, Grid:{word_grid_time:.3f}s, Annotations:{annotation_time:.3f}s, GPU:{gpu_time:.3f}s, Post:{post_processing_time:.3f}s)")
         service_logger.info(f"[{unique_id}] Analysis complete: {len(predicted_segments)} segments found")
         
         return [
