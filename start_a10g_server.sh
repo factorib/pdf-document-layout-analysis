@@ -3,6 +3,8 @@
 # A10G GPU-Optimized PDF Layout Analysis Server Startup Script
 # This script starts the native optimized server with detectron2 support
 
+git pull
+
 echo "🚀 Starting A10G GPU-Optimized PDF Layout Analysis Server"
 
 # Activate detectron2 environment with all dependencies
