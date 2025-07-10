@@ -1,5 +1,6 @@
 from functools import wraps
 from fastapi import HTTPException
+import inspect
 
 from configuration import service_logger
 
@@ -20,4 +21,6 @@ def catch_exceptions(func):
             service_logger.error("Error see traceback", exc_info=1)
             raise HTTPException(status_code=422, detail="Error see traceback")
 
+    # Preserve the original function's signature for FastAPI
+    wrapper.__signature__ = inspect.signature(func)
     return wrapper

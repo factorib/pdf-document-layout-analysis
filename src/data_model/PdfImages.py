@@ -34,7 +34,12 @@ class PdfImages:
 
     @staticmethod
     def remove_images():
-        shutil.rmtree(IMAGES_ROOT_PATH)
+        try:
+            if os.path.exists(IMAGES_ROOT_PATH):
+                shutil.rmtree(IMAGES_ROOT_PATH)
+        except (FileNotFoundError, OSError):
+            # Directory already removed by another thread, ignore
+            pass
 
     @staticmethod
     def from_pdf_path(pdf_path: str | Path, pdf_name: str = "", xml_file_name: str = ""):

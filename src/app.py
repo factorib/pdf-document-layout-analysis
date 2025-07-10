@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import torch
@@ -39,6 +40,18 @@ async def info():
         "supported_languages": supported_languages(),
     }
 
+@app.get("/status")
+async def status():
+    """Get server processing status"""
+    from concurrency_manager import request_manager
+    return {
+        "server": "A10G GPU-Optimized PDF Analysis",
+        "gpu_available": torch.cuda.is_available(),
+        "gpu_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "processing_status": request_manager.get_status(),
+        "timestamp": time.time()
+    }
+
 
 @app.get("/error")
 async def error():
@@ -46,11 +59,17 @@ async def error():
 
 
 @app.post("/")
-@catch_exceptions
 async def run(file: UploadFile = File(...), fast: bool = Form(False), extraction_format: str = Form("")):
-    if fast:
-        return await run_in_threadpool(analyze_pdf_fast, file.file.read(), "", extraction_format)
-    return await run_in_threadpool(analyze_pdf, file.file.read(), "", extraction_format)
+    from concurrency_manager import gpu_synchronized, with_isolated_workspace
+    
+    @gpu_synchronized
+    @with_isolated_workspace  
+    def process_pdf():
+        if fast:
+            return analyze_pdf_fast(file.file.read(), "", extraction_format)
+        return analyze_pdf(file.file.read(), "", extraction_format)
+    
+    return await process_pdf()
 
 
 @app.post("/save_xml/{xml_file_name}")
@@ -98,9 +117,15 @@ async def get_text_endpoint(file: UploadFile = File(...), fast: bool = Form(Fals
 
 
 @app.post("/visualize")
-@catch_exceptions
 async def get_visualization_endpoint(file: UploadFile = File(...), fast: bool = Form(False)):
-    return await run_in_threadpool(get_visualization, file, fast)
+    from concurrency_manager import gpu_synchronized, with_isolated_workspace
+    
+    @gpu_synchronized
+    @with_isolated_workspace
+    def process_visualization():
+        return get_visualization(file, fast)
+    
+    return await process_visualization()
 
 
 @app.post("/ocr")

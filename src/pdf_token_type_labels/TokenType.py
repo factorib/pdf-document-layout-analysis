@@ -1,7 +1,7 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class TokenType(StrEnum):
+class TokenType(str, Enum):
     FORMULA = "Formula"
     FOOTNOTE = "Footnote"
     LIST_ITEM = "List item"

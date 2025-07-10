@@ -19,7 +19,16 @@ def save_annotations_json(annotations: list, width_height: list, images: list):
 
     categories_dict = [{"id": key, "name": value} for key, value in DOCLAYNET_TYPE_BY_ID.items()]
 
-    coco_dict = {"images": images_dict, "categories": categories_dict, "annotations": annotations}
+    # Add the required "info" field for COCO format compatibility
+    info_dict = {
+        "description": "PDF Document Layout Analysis",
+        "version": "1.0",
+        "year": 2024,
+        "contributor": "PDF Layout Analysis System",
+        "date_created": "2024-01-01"
+    }
+
+    coco_dict = {"info": info_dict, "images": images_dict, "categories": categories_dict, "annotations": annotations}
 
     JSON_TEST_FILE_PATH.write_text(json.dumps(coco_dict))
 

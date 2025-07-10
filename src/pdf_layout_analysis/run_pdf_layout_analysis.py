@@ -27,8 +27,11 @@ def get_file_path(file_name, extension):
     return join(tempfile.gettempdir(), file_name + "." + extension)
 
 
-def pdf_content_to_pdf_path(file_content):
-    file_id = str(uuid.uuid1())
+def pdf_content_to_pdf_path(file_content, unique_id=None):
+    if unique_id is None:
+        file_id = str(uuid.uuid1())
+    else:
+        file_id = f"pdf_{unique_id}_{str(uuid.uuid1())[:8]}"
 
     pdf_path = Path(get_file_path(file_id, "pdf"))
     pdf_path.write_bytes(file_content)
@@ -51,26 +54,53 @@ def predict_doclaynet():
 
 
 def analyze_pdf(file: AnyStr, xml_file_name: str, extraction_format: str = "", keep_pdf: bool = False) -> list[dict]:
-    pdf_path = pdf_content_to_pdf_path(file)
-    service_logger.info(f"Creating PDF images")
-    pdf_images_list: list[PdfImages] = [PdfImages.from_pdf_path(pdf_path, "", xml_file_name)]
-    create_word_grid([pdf_images.pdf_features for pdf_images in pdf_images_list])
-    get_annotations(pdf_images_list)
-    predict_doclaynet()
-    remove_files()
-    predicted_segments = get_most_probable_pdf_segments("doclaynet", pdf_images_list, False)
-    predicted_segments = get_reading_orders(pdf_images_list, predicted_segments)
-    extract_formula_format(pdf_images_list[0], predicted_segments)
-    if extraction_format:
-        extract_table_format(pdf_images_list[0], predicted_segments, extraction_format)
-
-    if not keep_pdf:
-        pdf_path.unlink(missing_ok=True)
-
-    return [
-        SegmentBox.from_pdf_segment(pdf_segment, pdf_images_list[0].pdf_features.pages).to_dict()
-        for pdf_segment in predicted_segments
-    ]
+    import uuid
+    import threading
+    
+    # Create unique identifier for this request
+    request_id = str(uuid.uuid4())[:8] 
+    thread_id = threading.current_thread().ident
+    unique_id = f"{request_id}_{thread_id}"
+    
+    try:
+        pdf_path = pdf_content_to_pdf_path(file, unique_id)
+        service_logger.info(f"[{unique_id}] Starting PDF analysis")
+        
+        # Process PDF with isolated resources
+        pdf_images_list: list[PdfImages] = [PdfImages.from_pdf_path(pdf_path, "", xml_file_name)]
+        create_word_grid([pdf_images.pdf_features for pdf_images in pdf_images_list])
+        get_annotations(pdf_images_list)
+        
+        # Run GPU inference (this is the critical section)
+        service_logger.info(f"[{unique_id}] Running GPU inference")
+        predict_doclaynet()
+        
+        # Process results
+        predicted_segments = get_most_probable_pdf_segments("doclaynet", pdf_images_list, False)
+        predicted_segments = get_reading_orders(pdf_images_list, predicted_segments)
+        extract_formula_format(pdf_images_list[0], predicted_segments)
+        
+        if extraction_format:
+            extract_table_format(pdf_images_list[0], predicted_segments, extraction_format)
+        
+        service_logger.info(f"[{unique_id}] Analysis complete: {len(predicted_segments)} segments found")
+        
+        return [
+            SegmentBox.from_pdf_segment(pdf_segment, pdf_images_list[0].pdf_features.pages).to_dict()
+            for pdf_segment in predicted_segments
+        ]
+        
+    except Exception as e:
+        service_logger.error(f"[{unique_id}] Analysis failed: {e}", exc_info=True)
+        raise
+    finally:
+        # Cleanup
+        try:
+            remove_files()
+            if not keep_pdf and 'pdf_path' in locals():
+                pdf_path.unlink(missing_ok=True)
+        except Exception as cleanup_error:
+            service_logger.warning(f"[{unique_id}] Cleanup warning: {cleanup_error}")
 
 
 def remove_files():
