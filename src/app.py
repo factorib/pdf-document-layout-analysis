@@ -137,3 +137,8 @@ async def ocr_pdf_sync(file: UploadFile = File(...), language: str = Form("en"))
     path.write_bytes(file.file.read())
     processed_pdf_filepath = ocr_pdf(file.filename, namespace, language)
     return FileResponse(path=processed_pdf_filepath, media_type="application/pdf")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=80, log_level="info")
