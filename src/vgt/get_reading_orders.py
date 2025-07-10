@@ -1,9 +1,11 @@
+import time
 from fast_trainer.PdfSegment import PdfSegment
 from pdf_features.PdfPage import PdfPage
 from pdf_features.PdfToken import PdfToken
 from pdf_token_type_labels.TokenType import TokenType
 
 from data_model.PdfImages import PdfImages
+from configuration import service_logger
 
 try:
     from rtree import index
@@ -225,14 +227,32 @@ def get_ordered_segments_for_page(segments_for_page: list[PdfSegment], page: Pdf
 
 
 def get_reading_orders(pdf_images_list: list[PdfImages], predicted_segments: list[PdfSegment]):
+    start_time = time.time()
     ordered_segments: list[PdfSegment] = []
+    
+    service_logger.info(f"Reading order analysis: Processing {len(predicted_segments)} segments across {len(pdf_images_list)} documents")
+    
     try:
-        for pdf_images in pdf_images_list:
+        for pdf_idx, pdf_images in enumerate(pdf_images_list):
+            pdf_start = time.time()
             pdf_name = pdf_images.pdf_features.file_name
             segments_for_file = [segment for segment in predicted_segments if segment.pdf_name == pdf_name]
-            for page in pdf_images.pdf_features.pages:
+            
+            for page_idx, page in enumerate(pdf_images.pdf_features.pages):
+                page_start = time.time()
                 segments_for_page = [segment for segment in segments_for_file if segment.page_number == page.page_number]
-                ordered_segments.extend(get_ordered_segments_for_page(segments_for_page, page))
+                page_ordered = get_ordered_segments_for_page(segments_for_page, page)
+                ordered_segments.extend(page_ordered)
+                page_time = time.time() - page_start
+                
+                if len(segments_for_page) > 0:  # Only log pages with segments
+                    service_logger.info(f"Reading order analysis: Page {page.page_number} processed in {page_time:.3f}s ({len(segments_for_page)} segments → {len(page_ordered)} ordered)")
+            
+            pdf_time = time.time() - pdf_start
+            service_logger.info(f"Reading order analysis: Document {pdf_idx + 1} processed in {pdf_time:.3f}s")
+            
+        total_time = time.time() - start_time
+        service_logger.info(f"Reading order analysis: SUMMARY - Total:{total_time:.3f}s, Input:{len(predicted_segments)} segments, Output:{len(ordered_segments)} ordered segments")
         return ordered_segments
     finally:
         # Clear cache to prevent memory leaks

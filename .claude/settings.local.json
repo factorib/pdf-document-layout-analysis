@@ -5,7 +5,10 @@
       "Bash(curl:*)",
       "Bash(source:*)",
       "Bash(export:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)"
     ],
     "deny": []
   }

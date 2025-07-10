@@ -93,17 +93,38 @@ def analyze_pdf(file: AnyStr, xml_file_name: str, extraction_format: str = "", k
         gpu_time = time.time() - stage_start
         service_logger.info(f"[{unique_id}] GPU inference completed in {gpu_time:.3f}s")
         
-        # Process results
+        # Process results with detailed timing
         stage_start = time.time()
-        predicted_segments = get_most_probable_pdf_segments("doclaynet", pdf_images_list, False)
-        predicted_segments = get_reading_orders(pdf_images_list, predicted_segments)
-        extract_formula_format(pdf_images_list[0], predicted_segments)
         
+        # Step 1: Get most probable segments
+        step_start = time.time()
+        predicted_segments = get_most_probable_pdf_segments("doclaynet", pdf_images_list, False)
+        segment_extraction_time = time.time() - step_start
+        service_logger.info(f"[{unique_id}] Segment extraction completed in {segment_extraction_time:.3f}s")
+        
+        # Step 2: Get reading orders
+        step_start = time.time()
+        predicted_segments = get_reading_orders(pdf_images_list, predicted_segments)
+        reading_order_time = time.time() - step_start
+        service_logger.info(f"[{unique_id}] Reading order analysis completed in {reading_order_time:.3f}s")
+        
+        # Step 3: Extract formula format
+        step_start = time.time()
+        extract_formula_format(pdf_images_list[0], predicted_segments)
+        formula_extraction_time = time.time() - step_start
+        service_logger.info(f"[{unique_id}] Formula extraction completed in {formula_extraction_time:.3f}s")
+        
+        # Step 4: Extract table format (if requested)
+        table_extraction_time = 0
         if extraction_format:
+            step_start = time.time()
             extract_table_format(pdf_images_list[0], predicted_segments, extraction_format)
+            table_extraction_time = time.time() - step_start
+            service_logger.info(f"[{unique_id}] Table extraction completed in {table_extraction_time:.3f}s")
         
         post_processing_time = time.time() - stage_start
         service_logger.info(f"[{unique_id}] Post-processing completed in {post_processing_time:.3f}s")
+        service_logger.info(f"[{unique_id}] POST-PROCESSING BREAKDOWN: Segments:{segment_extraction_time:.3f}s, Reading:{reading_order_time:.3f}s, Formulas:{formula_extraction_time:.3f}s, Tables:{table_extraction_time:.3f}s")
         
         total_time = time.time() - start_time
         service_logger.info(f"[{unique_id}] TOTAL TIME: {total_time:.3f}s (PDF:{pdf_creation_time:.3f}s, Grid:{word_grid_time:.3f}s, Annotations:{annotation_time:.3f}s, GPU:{gpu_time:.3f}s, Post:{post_processing_time:.3f}s)")
