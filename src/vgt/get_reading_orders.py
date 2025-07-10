@@ -47,8 +47,8 @@ def find_segment_for_token(token: PdfToken, segments: list[PdfSegment], tokens_b
 
 def get_average_reading_order_for_segment(page: PdfPage, tokens_for_segment: list[PdfToken], token_to_order_map=None):
     if token_to_order_map is not None:
-        # Use pre-computed mapping for O(1) lookup per token
-        reading_order_sum: int = sum(token_to_order_map[token] for token in tokens_for_segment)
+        # Use pre-computed mapping for O(1) lookup per token ID
+        reading_order_sum: int = sum(token_to_order_map[token.id] for token in tokens_for_segment)
     else:
         # Fallback to O(n) lookup per token
         reading_order_sum: int = sum(page.tokens.index(token) for token in tokens_for_segment)
@@ -112,8 +112,8 @@ def get_ordered_segments_for_page(segments_for_page: list[PdfSegment], page: Pdf
                 segment.bounding_box.bottom
             ))
     
-    # Pre-compute token-to-order mapping for O(1) lookup
-    token_to_order_map = {token: i for i, token in enumerate(page.tokens)}
+    # Pre-compute token-to-order mapping for O(1) lookup using token IDs
+    token_to_order_map = {token.id: i for i, token in enumerate(page.tokens)}
     
     tokens_by_segments: dict[PdfSegment, list[PdfToken]] = {}
     for token in page.tokens:
