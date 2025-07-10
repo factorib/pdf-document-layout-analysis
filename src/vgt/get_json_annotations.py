@@ -4,6 +4,10 @@ from pdf_features.PdfToken import PdfToken
 from data_model.PdfImages import PdfImages
 from configuration import DOCLAYNET_TYPE_BY_ID
 from configuration import JSONS_ROOT_PATH, JSON_TEST_FILE_PATH
+import time
+import logging
+
+service_logger = logging.getLogger(__name__)
 
 
 def save_annotations_json(annotations: list, width_height: list, images: list):
@@ -57,15 +61,60 @@ def get_annotations_for_document(annotations, images, index, pdf_images, width_h
 
 
 def get_annotations(pdf_images_list: list[PdfImages]):
+    # Start annotation timing
+    start_time = time.time()
+    timing_data = {}
+    
+    # Generate unique ID for this annotation process
+    import uuid
+    ann_id = str(uuid.uuid4())[:8]
+    
+    service_logger.info(f"[JSON-{ann_id}] Starting JSON annotation generation for {len(pdf_images_list)} documents")
+    
+    # Stage 1: Directory Setup
+    stage_start = time.time()
     makedirs(JSONS_ROOT_PATH, exist_ok=True)
-
+    timing_data['directory_setup'] = time.time() - stage_start
+    service_logger.info(f"[JSON-{ann_id}] Directory setup completed in {timing_data['directory_setup']:.3f}s")
+    
+    # Stage 2: Data Structure Initialization
+    stage_start = time.time()
     annotations = list()
     images = list()
     width_height = list()
     index = 0
-
+    timing_data['data_initialization'] = time.time() - stage_start
+    service_logger.info(f"[JSON-{ann_id}] Data initialization completed in {timing_data['data_initialization']:.3f}s")
+    
+    # Stage 3: Document Processing
+    stage_start = time.time()
+    total_tokens = 0
     for pdf_images in pdf_images_list:
+        doc_start = time.time()
         get_annotations_for_document(annotations, images, index, pdf_images, width_height)
-        index += sum([len(page.tokens) for page in pdf_images.pdf_features.pages])
-
+        doc_tokens = sum([len(page.tokens) for page in pdf_images.pdf_features.pages])
+        total_tokens += doc_tokens
+        index += doc_tokens
+        doc_time = time.time() - doc_start
+        service_logger.info(f"[JSON-{ann_id}] Document processed in {doc_time:.3f}s ({doc_tokens} tokens)")
+    
+    timing_data['document_processing'] = time.time() - stage_start
+    service_logger.info(f"[JSON-{ann_id}] Document processing completed in {timing_data['document_processing']:.3f}s ({total_tokens} total tokens)")
+    
+    # Stage 4: JSON Saving
+    stage_start = time.time()
     save_annotations_json(annotations, width_height, images)
+    timing_data['json_saving'] = time.time() - stage_start
+    service_logger.info(f"[JSON-{ann_id}] JSON saving completed in {timing_data['json_saving']:.3f}s")
+    
+    # Calculate total time
+    total_time = time.time() - start_time
+    timing_data['total_time'] = total_time
+    
+    # Log comprehensive timing summary
+    service_logger.info(f"[JSON-{ann_id}] JSON ANNOTATION TIMING SUMMARY - Total: {total_time:.3f}s")
+    service_logger.info(f"[JSON-{ann_id}] ├── Directory Setup: {timing_data['directory_setup']:.3f}s ({timing_data['directory_setup']/total_time*100:.1f}%)")
+    service_logger.info(f"[JSON-{ann_id}] ├── Data Initialization: {timing_data['data_initialization']:.3f}s ({timing_data['data_initialization']/total_time*100:.1f}%)")
+    service_logger.info(f"[JSON-{ann_id}] ├── Document Processing: {timing_data['document_processing']:.3f}s ({timing_data['document_processing']/total_time*100:.1f}%)")
+    service_logger.info(f"[JSON-{ann_id}] └── JSON Saving: {timing_data['json_saving']:.3f}s ({timing_data['json_saving']/total_time*100:.1f}%)")
+    service_logger.info(f"[JSON-{ann_id}] JSON annotation complete: {len(annotations)} annotations, {len(images)} images")

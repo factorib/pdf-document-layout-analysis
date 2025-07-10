@@ -3,6 +3,8 @@ import pickle
 from os.path import join
 from pathlib import Path
 from statistics import mode
+import time
+import logging
 
 from fast_trainer.PdfSegment import PdfSegment
 from pdf_features.PdfFeatures import PdfFeatures
@@ -12,6 +14,8 @@ from pdf_token_type_labels.TokenType import TokenType
 from data_model.PdfImages import PdfImages
 from configuration import ROOT_PATH, DOCLAYNET_TYPE_BY_ID
 from data_model.Prediction import Prediction
+
+service_logger = logging.getLogger(__name__)
 
 
 def get_prediction_from_annotation(annotation, images_names, vgt_predictions_dict):
@@ -124,18 +128,75 @@ def prediction_exists_for_page(page_pdf_name, vgt_predictions_dict):
 
 
 def get_most_probable_pdf_segments(model_name: str, pdf_images_list: list[PdfImages], save_output: bool = False):
+    # Start segment extraction timing
+    start_time = time.time()
+    timing_data = {}
+    
+    # Generate unique ID for this segment extraction process
+    import uuid
+    seg_id = str(uuid.uuid4())[:8]
+    
+    service_logger.info(f"[SEG-{seg_id}] Starting segment extraction for model: {model_name}")
+    
+    # Stage 1: Initialization and VGT Predictions Loading
+    stage_start = time.time()
     most_probable_pdf_segments: list[PdfSegment] = []
     vgt_predictions_dict = get_vgt_predictions(model_name)
+    timing_data['vgt_predictions_loading'] = time.time() - stage_start
+    service_logger.info(f"[SEG-{seg_id}] VGT predictions loaded in {timing_data['vgt_predictions_loading']:.3f}s")
+    
+    # Stage 2: PDF Features Processing
+    stage_start = time.time()
     pdf_features_list: list[PdfFeatures] = [pdf_images.pdf_features for pdf_images in pdf_images_list]
+    timing_data['pdf_features_processing'] = time.time() - stage_start
+    service_logger.info(f"[SEG-{seg_id}] PDF features processed in {timing_data['pdf_features_processing']:.3f}s")
+    
+    # Stage 3: Page-by-Page Segment Extraction
+    stage_start = time.time()
+    total_pages = 0
+    pages_processed = 0
+    
     for pdf_features in pdf_features_list:
         for page in pdf_features.pages:
+            total_pages += 1
             page_pdf_name = pdf_features.file_name + "_" + str(page.page_number - 1)
             if not prediction_exists_for_page(page_pdf_name, vgt_predictions_dict):
                 continue
+            
+            page_start = time.time()
             page_segments = get_pdf_segments_for_page(page, pdf_features.file_name, page_pdf_name, vgt_predictions_dict)
             most_probable_pdf_segments.extend(page_segments)
+            pages_processed += 1
+            page_time = time.time() - page_start
+            
+            if pages_processed % 5 == 0:  # Log every 5 pages
+                service_logger.info(f"[SEG-{seg_id}] Page {pages_processed} processed in {page_time:.3f}s ({len(page_segments)} segments)")
+    
+    timing_data['page_segment_extraction'] = time.time() - stage_start
+    service_logger.info(f"[SEG-{seg_id}] Page segment extraction completed in {timing_data['page_segment_extraction']:.3f}s ({pages_processed}/{total_pages} pages)")
+    
+    # Stage 4: Output Saving (if requested)
     if save_output:
+        stage_start = time.time()
         save_path = join(ROOT_PATH, f"model_output_{model_name}", "predicted_segments.pickle")
         with open(save_path, mode="wb") as file:
             pickle.dump(most_probable_pdf_segments, file)
+        timing_data['output_saving'] = time.time() - stage_start
+        service_logger.info(f"[SEG-{seg_id}] Output saving completed in {timing_data['output_saving']:.3f}s")
+    
+    # Calculate total time
+    total_time = time.time() - start_time
+    timing_data['total_time'] = total_time
+    
+    # Log comprehensive timing summary
+    service_logger.info(f"[SEG-{seg_id}] SEGMENT EXTRACTION TIMING SUMMARY - Total: {total_time:.3f}s")
+    service_logger.info(f"[SEG-{seg_id}] ├── VGT Predictions Loading: {timing_data['vgt_predictions_loading']:.3f}s ({timing_data['vgt_predictions_loading']/total_time*100:.1f}%)")
+    service_logger.info(f"[SEG-{seg_id}] ├── PDF Features Processing: {timing_data['pdf_features_processing']:.3f}s ({timing_data['pdf_features_processing']/total_time*100:.1f}%)")
+    service_logger.info(f"[SEG-{seg_id}] ├── Page Segment Extraction: {timing_data['page_segment_extraction']:.3f}s ({timing_data['page_segment_extraction']/total_time*100:.1f}%)")
+    if save_output:
+        service_logger.info(f"[SEG-{seg_id}] └── Output Saving: {timing_data['output_saving']:.3f}s ({timing_data['output_saving']/total_time*100:.1f}%)")
+    else:
+        service_logger.info(f"[SEG-{seg_id}] └── Output Saving: Skipped")
+    service_logger.info(f"[SEG-{seg_id}] Segment extraction complete: {len(most_probable_pdf_segments)} segments found")
+    
     return most_probable_pdf_segments

@@ -2,6 +2,10 @@ from os import makedirs
 from os.path import join
 from pdf_annotate import PdfAnnotator, Location, Appearance
 from configuration import ROOT_PATH
+import time
+import logging
+
+service_logger = logging.getLogger(__name__)
 
 DOCLAYNET_COLOR_BY_TYPE = {
     "Caption": "#FFC300",
@@ -59,11 +63,30 @@ def save_output(annotator: PdfAnnotator, output_pdf_path: str):
 
 
 def save_output_to_pdf(pdf_path: str, segment_boxes: list[dict]):
+    # Start annotation timing
+    start_time = time.time()
+    timing_data = {}
+    
+    # Generate unique ID for this annotation process
+    import uuid
+    ann_id = str(uuid.uuid4())[:8]
+    
+    service_logger.info(f"[ANN-{ann_id}] Starting PDF annotation for {len(segment_boxes)} segments")
+    
+    # Stage 1: Setup and Initialization
+    stage_start = time.time()
     pdf_outputs_path = join(ROOT_PATH, f"pdf_outputs")
     makedirs(pdf_outputs_path, exist_ok=True)
     annotator = PdfAnnotator(str(pdf_path))
+    timing_data['setup_initialization'] = time.time() - stage_start
+    service_logger.info(f"[ANN-{ann_id}] Setup and initialization completed in {timing_data['setup_initialization']:.3f}s")
+    
+    # Stage 2: Annotation Processing
+    stage_start = time.time()
     segment_index = 0
     current_page = 1
+    annotations_processed = 0
+    
     for segment_box in segment_boxes:
         if int(segment_box["page_number"]) != current_page:
             segment_index = 0
@@ -71,4 +94,24 @@ def save_output_to_pdf(pdf_path: str, segment_boxes: list[dict]):
         page_height = int(segment_box["page_height"])
         add_prediction_annotation(annotator, segment_box, segment_index, page_height)
         segment_index += 1
+        annotations_processed += 1
+    
+    timing_data['annotation_processing'] = time.time() - stage_start
+    service_logger.info(f"[ANN-{ann_id}] Annotation processing completed in {timing_data['annotation_processing']:.3f}s ({annotations_processed} annotations)")
+    
+    # Stage 3: PDF Saving
+    stage_start = time.time()
     save_output(annotator, pdf_path)
+    timing_data['pdf_saving'] = time.time() - stage_start
+    service_logger.info(f"[ANN-{ann_id}] PDF saving completed in {timing_data['pdf_saving']:.3f}s")
+    
+    # Calculate total time
+    total_time = time.time() - start_time
+    timing_data['total_time'] = total_time
+    
+    # Log comprehensive timing summary
+    service_logger.info(f"[ANN-{ann_id}] ANNOTATION TIMING SUMMARY - Total: {total_time:.3f}s")
+    service_logger.info(f"[ANN-{ann_id}] ├── Setup & Initialization: {timing_data['setup_initialization']:.3f}s ({timing_data['setup_initialization']/total_time*100:.1f}%)")
+    service_logger.info(f"[ANN-{ann_id}] ├── Annotation Processing: {timing_data['annotation_processing']:.3f}s ({timing_data['annotation_processing']/total_time*100:.1f}%)")
+    service_logger.info(f"[ANN-{ann_id}] └── PDF Saving: {timing_data['pdf_saving']:.3f}s ({timing_data['pdf_saving']/total_time*100:.1f}%)")
+    service_logger.info(f"[ANN-{ann_id}] Annotation complete: {annotations_processed} annotations added to PDF")
