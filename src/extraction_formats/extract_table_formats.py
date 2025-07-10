@@ -10,6 +10,9 @@ from data_model.PdfImages import PdfImages
 from fast_trainer.PdfSegment import PdfSegment
 from pdf_token_type_labels.TokenType import TokenType
 
+# Global cached model instance to avoid repeated initialization
+_table_model = None
+
 
 def get_table_format(
     model,
@@ -42,8 +45,16 @@ def get_table_format(
             return tgt_code
 
 
-def get_model():
+def get_cached_table_model():
+    """Get cached table model instance to avoid repeated initialization."""
+    global _table_model
+    if _table_model is None:
+        _table_model = _build_table_model()
+    return _table_model
 
+
+def _build_table_model():
+    """Build table model instance (internal function)."""
     ckpt_path: str = "U4R/StructTable-base"
     max_new_tokens: int = 2048
     max_waiting_time: int = 1000
@@ -58,6 +69,11 @@ def get_model():
     return model
 
 
+def get_model():
+    """Legacy function - use get_cached_table_model() instead."""
+    return get_cached_table_model()
+
+
 def extract_table_format(pdf_images: PdfImages, predicted_segments: list[PdfSegment], extraction_format: str):
     table_segments = [
         (index, segment) for index, segment in enumerate(predicted_segments) if segment.segment_type == TokenType.TABLE
@@ -65,9 +81,12 @@ def extract_table_format(pdf_images: PdfImages, predicted_segments: list[PdfSegm
     if not table_segments:
         return
 
-    model = get_model()
+    model = get_cached_table_model()
 
     for index, table_segment in table_segments:
+        # Skip segments with invalid dimensions
+        if table_segment.bounding_box.width <= 0 or table_segment.bounding_box.height <= 0:
+            continue
         page_image: Image = pdf_images.pdf_images[table_segment.page_number - 1]
         left, top = table_segment.bounding_box.left, table_segment.bounding_box.top
         width, height = table_segment.bounding_box.width, table_segment.bounding_box.height
